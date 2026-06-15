@@ -68,7 +68,7 @@ function Home() {
             { icon: Gauge, t: "Signal Meter", d: "A consolidated buy/sell gauge for every timeframe so you don't second-guess the bias." },
             { icon: Newspaper, t: "Pair News", d: "Latest headlines for the symbol you're analyzing, side-by-side with the chart." },
           ].map((f) => (
-            <div key={t} className="rounded-xl border border-border bg-surface p-5">
+            <div key={f.t} className="rounded-xl border border-border bg-surface p-5">
               <f.icon className="h-5 w-5 text-primary" />
               <h3 className="mt-4 font-semibold">{f.t}</h3>
               <p className="mt-1 text-sm text-muted-foreground">{f.d}</p>
