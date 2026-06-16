@@ -230,6 +230,7 @@ async def news(symbol: str = Query(...), limit: int = Query(8, ge=1, le=30)):
                 "title": p.get("title"),
                 "url": p.get("url"),
                 "source": (p.get("source") or {}).get("title", "CryptoPanic"),
+                "time": p.get("published_at"),
                 "publishedAt": p.get("published_at"),
             }
             for p in (data.get("results") or [])[:limit]
