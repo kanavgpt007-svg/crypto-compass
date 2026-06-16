@@ -21,6 +21,7 @@ Run:
 
 from __future__ import annotations
 
+import math
 import os
 from typing import Any
 
@@ -29,6 +30,27 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from analysis import run_analysis
+
+
+def sanitize(obj: Any) -> Any:
+    """Recursively replace NaN/Inf with None and cast numpy scalars to Python types
+    so the result is JSON-serializable."""
+    # numpy scalar -> python scalar
+    if hasattr(obj, "item") and not isinstance(obj, (str, bytes, list, dict, tuple)):
+        try:
+            obj = obj.item()
+        except Exception:
+            pass
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [sanitize(v) for v in obj]
+    return obj
+
 
 # ---------------------------------------------------------------------------
 # App + CORS
