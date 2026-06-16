@@ -84,8 +84,10 @@ async function http<T>(path: string, params?: Record<string, string | number>): 
 }
 
 export const api = {
-  klines: (symbol: string, interval: Timeframe, limit = 200) =>
-    http<Candle[]>("/api/market/klines", { symbol, interval, limit }),
+  klines: async (symbol: string, interval: Timeframe, limit = 200) => {
+    const r = await http<{ candles: Candle[] }>("/api/market/klines", { symbol, interval, limit });
+    return r.candles ?? [];
+  },
 
   ticker: (symbol: string) =>
     http<Ticker>("/api/market/ticker", { symbol }),
@@ -93,6 +95,8 @@ export const api = {
   analysis: (symbol: string, interval: Timeframe) =>
     http<AnalysisResponse>("/api/analysis", { symbol, interval }),
 
-  news: (symbol: string, limit = 8) =>
-    http<NewsItem[]>("/api/news", { symbol, limit }),
+  news: async (symbol: string, limit = 8) => {
+    const r = await http<{ items: NewsItem[] }>("/api/news", { symbol, limit });
+    return r.items ?? [];
+  },
 };
