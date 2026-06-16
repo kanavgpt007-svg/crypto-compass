@@ -207,7 +207,7 @@ async def analysis(
         for c in raw
     ]
 
-    analysis_result = run_analysis(candles)
+    analysis_result = sanitize(run_analysis(candles))
     return {"symbol": symbol, "interval": interval, **analysis_result}
 
 
