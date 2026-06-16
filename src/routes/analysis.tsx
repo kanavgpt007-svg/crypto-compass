@@ -167,7 +167,7 @@ function AnalysisView({
             <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading chart…
           </div>
         ) : (
-          <PriceChart pair={pair} tf={tf} candles={klinesQ.data ?? []} />
+          <PriceChart pair={pair} tf={tf} candles={Array.isArray(klinesQ.data) ? klinesQ.data : []} />
         )}
 
         <aside className="rounded-xl border border-border bg-surface p-4">
