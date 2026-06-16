@@ -84,9 +84,11 @@ async function http<T>(path: string, params?: Record<string, string | number>): 
 }
 
 export const api = {
-  klines: async (symbol: string, interval: Timeframe, limit = 200) => {
-    const r = await http<{ candles: Candle[] }>("/api/market/klines", { symbol, interval, limit });
-    return r.candles ?? [];
+  klines: async (symbol: string, interval: Timeframe, limit = 200): Promise<Candle[]> => {
+    const r = await http<any>("/api/market/klines", { symbol, interval, limit });
+    if (Array.isArray(r)) return r as Candle[];
+    if (r && Array.isArray(r.candles)) return r.candles as Candle[];
+    return [];
   },
 
   ticker: (symbol: string) =>
@@ -95,8 +97,11 @@ export const api = {
   analysis: (symbol: string, interval: Timeframe) =>
     http<AnalysisResponse>("/api/analysis", { symbol, interval }),
 
-  news: async (symbol: string, limit = 8) => {
-    const r = await http<{ items: NewsItem[] }>("/api/news", { symbol, limit });
-    return r.items ?? [];
+  news: async (symbol: string, limit = 8): Promise<NewsItem[]> => {
+    const r = await http<any>("/api/news", { symbol, limit });
+    if (Array.isArray(r)) return r as NewsItem[];
+    if (r && Array.isArray(r.items)) return r.items as NewsItem[];
+    if (r && Array.isArray(r.results)) return r.results as NewsItem[];
+    return [];
   },
 };
