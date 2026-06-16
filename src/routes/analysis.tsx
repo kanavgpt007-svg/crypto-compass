@@ -1,15 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { Search, TrendingUp, Clock, ExternalLink } from "lucide-react";
-import {
-  SUGGESTED_PAIRS,
-  TIMEFRAMES,
-  type Timeframe,
-  getIndicatorAnalysis,
-  getPatternAnalysis,
-  summarize,
-  getNews,
-} from "@/lib/analysis-data";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Search, TrendingUp, Clock, ExternalLink, Loader2, AlertTriangle } from "lucide-react";
+import { SUGGESTED_PAIRS, TIMEFRAMES } from "@/lib/analysis-data";
+import { api, type Timeframe, type Summary } from "@/lib/api";
 import { SignalBadge } from "@/components/SignalBadge";
 import { SignalGauge } from "@/components/SignalGauge";
 import { PriceChart } from "@/components/PriceChart";
@@ -95,29 +89,36 @@ function AnalysisView({
   mode: "technical" | "candlestick"; setMode: (m: "technical" | "candlestick") => void;
   onReset: () => void;
 }) {
-  const indicators = useMemo(() => getIndicatorAnalysis(pair, tf), [pair, tf]);
-  const patterns = useMemo(() => getPatternAnalysis(pair, tf), [pair, tf]);
-  const news = useMemo(() => getNews(pair), [pair]);
+  const klinesQ = useQuery({
+    queryKey: ["klines", pair, tf],
+    queryFn: () => api.klines(pair, tf, 200),
+    refetchInterval: 30_000,
+  });
 
-  const indSummary = useMemo(() => summarize(indicators.map((i) => i.signal)), [indicators]);
-  const patSummary = useMemo(
-    () => summarize(patterns.filter((p) => p.detected).map((p) => p.signal)),
-    [patterns]
-  );
-  const overall = useMemo(() => {
-    const combined = [...indicators.map((i) => i.signal), ...patterns.filter((p) => p.detected).map((p) => p.signal)];
-    return summarize(combined.length ? combined : indicators.map((i) => i.signal));
-  }, [indicators, patterns]);
+  const analysisQ = useQuery({
+    queryKey: ["analysis", pair, tf],
+    queryFn: () => api.analysis(pair, tf),
+    refetchInterval: 60_000,
+  });
 
-  // per-timeframe summaries for sidebar
-  const perTf = useMemo(
-    () => TIMEFRAMES.map((t) => {
-      const inds = getIndicatorAnalysis(pair, t).map((i) => i.signal);
-      const pats = getPatternAnalysis(pair, t).filter((p) => p.detected).map((p) => p.signal);
-      return { tf: t, ...summarize([...inds, ...pats]) };
-    }),
-    [pair]
+  const newsQ = useQuery({
+    queryKey: ["news", pair],
+    queryFn: () => api.news(pair, 8),
+    refetchInterval: 5 * 60_000,
+  });
+
+  // per-timeframe summary sidebar (parallel queries)
+  const perTfQueries = TIMEFRAMES.map((t) =>
+    useQuery({
+      queryKey: ["analysis-summary", pair, t],
+      queryFn: () => api.analysis(pair, t).then((a) => a.summary),
+      staleTime: 60_000,
+    })
   );
+
+  const indicators = analysisQ.data?.indicators ?? [];
+  const patterns = analysisQ.data?.patterns ?? [];
+  const overall: Summary = analysisQ.data?.summary ?? { label: "NEUTRAL", score: 0, counts: {} };
 
   return (
     <div className="mx-auto max-w-7xl px-6 py-8">
@@ -126,11 +127,25 @@ function AnalysisView({
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-bold tracking-tight">{pair}</h1>
           <SignalBadge signal={overall.label} size="md" />
+          {analysisQ.isFetching && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
         </div>
         <button onClick={onReset} className="rounded-md border border-border bg-surface px-3 py-1.5 text-xs hover:bg-surface-elevated">
           ← Change pair
         </button>
       </div>
+
+      {(klinesQ.error || analysisQ.error) && (
+        <div className="mt-4 flex items-start gap-2 rounded-lg border border-bear/40 bg-bear/10 p-3 text-sm">
+          <AlertTriangle className="mt-0.5 h-4 w-4 text-bear" />
+          <div>
+            <p className="font-medium text-bear">Backend unreachable</p>
+            <p className="text-muted-foreground">
+              {(klinesQ.error || analysisQ.error)?.toString()}<br />
+              Make sure your FastAPI server is running and <code className="font-mono">VITE_API_URL</code> points to it.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Timeframe selector */}
       <div className="mt-4 inline-flex rounded-lg border border-border bg-surface p-1">
@@ -147,9 +162,14 @@ function AnalysisView({
 
       {/* Chart + sidebar */}
       <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_300px]">
-        <PriceChart pair={pair} tf={tf} />
+        {klinesQ.isLoading ? (
+          <div className="flex h-[400px] items-center justify-center rounded-xl border border-border bg-surface text-sm text-muted-foreground">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading chart…
+          </div>
+        ) : (
+          <PriceChart pair={pair} tf={tf} candles={klinesQ.data ?? []} />
+        )}
 
-        {/* Right-side per-timeframe gauge */}
         <aside className="rounded-xl border border-border bg-surface p-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold">Signal by timeframe</h3>
@@ -157,21 +177,29 @@ function AnalysisView({
           </div>
           <p className="mt-1 text-xs text-muted-foreground">Consolidated indicator + pattern bias.</p>
           <div className="mt-4 space-y-3">
-            {perTf.map((row) => (
-              <button
-                key={row.tf}
-                onClick={() => setTf(row.tf)}
-                className={`block w-full rounded-lg border p-3 text-left transition ${
-                  tf === row.tf ? "border-primary bg-primary/5" : "border-border hover:bg-surface-elevated"
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-mono text-xs uppercase tracking-wider text-muted-foreground">{row.tf}</span>
-                  <SignalBadge signal={row.label} />
-                </div>
-                <div className="mt-2"><SignalGauge score={row.score} label={row.label} /></div>
-              </button>
-            ))}
+            {TIMEFRAMES.map((t, idx) => {
+              const q = perTfQueries[idx];
+              const s = q.data;
+              return (
+                <button
+                  key={t}
+                  onClick={() => setTf(t)}
+                  className={`block w-full rounded-lg border p-3 text-left transition ${
+                    tf === t ? "border-primary bg-primary/5" : "border-border hover:bg-surface-elevated"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-xs uppercase tracking-wider text-muted-foreground">{t}</span>
+                    {s ? <SignalBadge signal={s.label} /> : (
+                      <span className="font-mono text-[10px] text-muted-foreground/60">
+                        {q.isLoading ? "…" : "—"}
+                      </span>
+                    )}
+                  </div>
+                  {s && <div className="mt-2"><SignalGauge score={s.score} label={s.label} /></div>}
+                </button>
+              );
+            })}
           </div>
         </aside>
       </div>
@@ -189,19 +217,20 @@ function AnalysisView({
             >{m} analysis</button>
           ))}
         </div>
-        <div className="hidden text-xs text-muted-foreground sm:block">
-          Summary on <span className="font-mono uppercase text-foreground">{tf}</span> · {mode === "technical" ? indSummary.counts.BUY + indSummary.counts.STRONG_BUY : patSummary.counts.BUY + patSummary.counts.STRONG_BUY} bullish ·{" "}
-          {mode === "technical" ? indSummary.counts.SELL + indSummary.counts.STRONG_SELL : patSummary.counts.SELL + patSummary.counts.STRONG_SELL} bearish
-        </div>
       </div>
 
       {/* Analysis table */}
       <div className="mt-4 overflow-hidden rounded-xl border border-border bg-surface">
-        {mode === "technical" ? (
+        {analysisQ.isLoading ? (
+          <div className="flex items-center justify-center p-10 text-sm text-muted-foreground">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Computing analysis…
+          </div>
+        ) : mode === "technical" ? (
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-surface-elevated text-left font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
                 <th className="px-4 py-3">Indicator</th>
+                <th className="px-4 py-3">Category</th>
                 <th className="px-4 py-3">Value</th>
                 <th className="px-4 py-3 text-right">Signal</th>
               </tr>
@@ -210,10 +239,14 @@ function AnalysisView({
               {indicators.map((i) => (
                 <tr key={i.name} className="border-b border-border/50 last:border-0 hover:bg-surface-elevated/50">
                   <td className="px-4 py-2.5">{i.name}</td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{i.category}</td>
                   <td className="px-4 py-2.5 font-mono text-muted-foreground">{i.value}</td>
                   <td className="px-4 py-2.5 text-right"><SignalBadge signal={i.signal} /></td>
                 </tr>
               ))}
+              {indicators.length === 0 && (
+                <tr><td colSpan={4} className="p-6 text-center text-sm text-muted-foreground">No indicator data.</td></tr>
+              )}
             </tbody>
           </table>
         ) : (
@@ -221,8 +254,9 @@ function AnalysisView({
             <thead>
               <tr className="border-b border-border bg-surface-elevated text-left font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
                 <th className="px-4 py-3">Pattern</th>
+                <th className="px-4 py-3">Category</th>
                 <th className="px-4 py-3">Detected</th>
-                <th className="px-4 py-3">Bars ago</th>
+                <th className="px-4 py-3">Reliability</th>
                 <th className="px-4 py-3 text-right">Signal</th>
               </tr>
             </thead>
@@ -230,13 +264,17 @@ function AnalysisView({
               {patterns.map((p) => (
                 <tr key={p.name} className="border-b border-border/50 last:border-0 hover:bg-surface-elevated/50">
                   <td className="px-4 py-2.5">{p.name}</td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{p.category}</td>
                   <td className="px-4 py-2.5 font-mono text-muted-foreground">{p.detected ? "Yes" : "—"}</td>
-                  <td className="px-4 py-2.5 font-mono text-muted-foreground">{p.detected ? p.bars : "—"}</td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{p.reliability}</td>
                   <td className="px-4 py-2.5 text-right">
                     {p.detected ? <SignalBadge signal={p.signal} /> : <span className="font-mono text-xs text-muted-foreground/60">—</span>}
                   </td>
                 </tr>
               ))}
+              {patterns.length === 0 && (
+                <tr><td colSpan={5} className="p-6 text-center text-sm text-muted-foreground">No patterns reported.</td></tr>
+              )}
             </tbody>
           </table>
         )}
@@ -246,11 +284,17 @@ function AnalysisView({
       <section className="mt-10">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">Latest news — {pair.split("/")[0]}</h2>
-          <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">last 24h</span>
+          <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">live</span>
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
-          {news.map((n, idx) => (
-            <a key={idx} href="#" className="group rounded-xl border border-border bg-surface p-4 transition hover:border-primary/40">
+          {newsQ.isLoading && (
+            <div className="col-span-full flex items-center justify-center rounded-xl border border-border bg-surface p-6 text-sm text-muted-foreground">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading news…
+            </div>
+          )}
+          {(newsQ.data ?? []).map((n, idx) => (
+            <a key={idx} href={n.url} target="_blank" rel="noreferrer"
+              className="group rounded-xl border border-border bg-surface p-4 transition hover:border-primary/40">
               <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
                 <span className="text-primary">{n.source}</span>
                 <span>·</span>
@@ -258,9 +302,15 @@ function AnalysisView({
                 <span>{n.time}</span>
               </div>
               <h3 className="mt-2 font-medium leading-snug group-hover:text-primary">{n.title}</h3>
+              {n.snippet && <p className="mt-1 text-xs text-muted-foreground">{n.snippet}</p>}
               <ExternalLink className="mt-3 h-3.5 w-3.5 text-muted-foreground" />
             </a>
           ))}
+          {!newsQ.isLoading && (newsQ.data?.length ?? 0) === 0 && (
+            <div className="col-span-full rounded-xl border border-border bg-surface p-6 text-center text-sm text-muted-foreground">
+              No news available.
+            </div>
+          )}
         </div>
       </section>
     </div>
